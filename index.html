@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yahtzee – Simulación Monte Carlo</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════════ -->
+<header>
+  <div>
+    <h1>🎲 Yahtzee</h1>
+    <p class="subtitle">Simulación Monte Carlo · 2 Jugadores</p>
+  </div>
+  <div class="controls">
+    <button id="btn-new-game">↺ Nueva Partida</button>
+    <button id="btn-stats">📊 Estadísticas</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════
+     STATUS BAR
+════════════════════════════════════════════════════════════ -->
+<div id="status-bar">Cargando…</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MAIN
+════════════════════════════════════════════════════════════ -->
+<main>
+
+  <!-- Dice area -->
+  <section class="dice-area" aria-label="Dados">
+    <h2>Dados</h2>
+
+    <div id="dice-container" role="group" aria-label="5 dados">
+      <!-- Dice buttons injected by ui.js -->
+    </div>
+
+    <div class="controls">
+      <button id="btn-roll">🎲 Lanzar (3 restantes)</button>
+    </div>
+
+    <!-- Potential score hints (refreshed after each roll) -->
+    <div id="potential-scores" aria-live="polite" aria-label="Puntuaciones posibles"></div>
+  </section>
+
+  <!-- Score board -->
+  <section class="scoreboard" aria-label="Marcadores">
+
+    <!-- ── Player 1 ── -->
+    <div class="score-card" id="card-p1">
+      <div class="score-card-header p1">👤 Jugador 1</div>
+      <table class="score-table" aria-label="Marcador Jugador 1">
+        <thead>
+          <tr>
+            <th>Categoría</th>
+            <th>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Upper section -->
+          <tr class="section-divider"><td colspan="2">Sección Superior</td></tr>
+          <tr><td>Ases (1s)</td>       <td class="score-cell" id="score-p1-ones">—</td></tr>
+          <tr><td>Doses (2s)</td>      <td class="score-cell" id="score-p1-twos">—</td></tr>
+          <tr><td>Treses (3s)</td>     <td class="score-cell" id="score-p1-threes">—</td></tr>
+          <tr><td>Cuatros (4s)</td>    <td class="score-cell" id="score-p1-fours">—</td></tr>
+          <tr><td>Cincos (5s)</td>     <td class="score-cell" id="score-p1-fives">—</td></tr>
+          <tr><td>Seises (6s)</td>     <td class="score-cell" id="score-p1-sixes">—</td></tr>
+          <tr class="totals-row"><td>Total Superior</td>  <td id="total-upper-p1">0</td></tr>
+          <tr class="totals-row"><td>Bono (≥63 → +35)</td><td id="bonus-p1">0</td></tr>
+          <tr class="upper-progress"><td colspan="2" id="upper-progress-p1">0 / 63 (bono: 35 pts)</td></tr>
+
+          <!-- Lower section -->
+          <tr class="section-divider"><td colspan="2">Sección Inferior</td></tr>
+          <tr><td>Trío</td>            <td class="score-cell" id="score-p1-threeOfAKind">—</td></tr>
+          <tr><td>Póker</td>           <td class="score-cell" id="score-p1-fourOfAKind">—</td></tr>
+          <tr><td>Full House</td>      <td class="score-cell" id="score-p1-fullHouse">—</td></tr>
+          <tr><td>Escalera Corta</td>  <td class="score-cell" id="score-p1-smallStraight">—</td></tr>
+          <tr><td>Escalera Larga</td>  <td class="score-cell" id="score-p1-largeStraight">—</td></tr>
+          <tr><td>Yahtzee</td>         <td class="score-cell" id="score-p1-yahtzee">—</td></tr>
+          <tr><td>Oportunidad</td>     <td class="score-cell" id="score-p1-chance">—</td></tr>
+          <tr class="totals-row"><td>Total Inferior</td>  <td id="total-lower-p1">0</td></tr>
+
+          <!-- Grand total -->
+          <tr class="grand-total-row"><td>TOTAL</td><td id="grand-total-p1">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Player 2 ── -->
+    <div class="score-card" id="card-p2">
+      <div class="score-card-header p2">👤 Jugador 2</div>
+      <table class="score-table" aria-label="Marcador Jugador 2">
+        <thead>
+          <tr>
+            <th>Categoría</th>
+            <th>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Upper section -->
+          <tr class="section-divider"><td colspan="2">Sección Superior</td></tr>
+          <tr><td>Ases (1s)</td>       <td class="score-cell" id="score-p2-ones">—</td></tr>
+          <tr><td>Doses (2s)</td>      <td class="score-cell" id="score-p2-twos">—</td></tr>
+          <tr><td>Treses (3s)</td>     <td class="score-cell" id="score-p2-threes">—</td></tr>
+          <tr><td>Cuatros (4s)</td>    <td class="score-cell" id="score-p2-fours">—</td></tr>
+          <tr><td>Cincos (5s)</td>     <td class="score-cell" id="score-p2-fives">—</td></tr>
+          <tr><td>Seises (6s)</td>     <td class="score-cell" id="score-p2-sixes">—</td></tr>
+          <tr class="totals-row"><td>Total Superior</td>  <td id="total-upper-p2">0</td></tr>
+          <tr class="totals-row"><td>Bono (≥63 → +35)</td><td id="bonus-p2">0</td></tr>
+          <tr class="upper-progress"><td colspan="2" id="upper-progress-p2">0 / 63 (bono: 35 pts)</td></tr>
+
+          <!-- Lower section -->
+          <tr class="section-divider"><td colspan="2">Sección Inferior</td></tr>
+          <tr><td>Trío</td>            <td class="score-cell" id="score-p2-threeOfAKind">—</td></tr>
+          <tr><td>Póker</td>           <td class="score-cell" id="score-p2-fourOfAKind">—</td></tr>
+          <tr><td>Full House</td>      <td class="score-cell" id="score-p2-fullHouse">—</td></tr>
+          <tr><td>Escalera Corta</td>  <td class="score-cell" id="score-p2-smallStraight">—</td></tr>
+          <tr><td>Escalera Larga</td>  <td class="score-cell" id="score-p2-largeStraight">—</td></tr>
+          <tr><td>Yahtzee</td>         <td class="score-cell" id="score-p2-yahtzee">—</td></tr>
+          <tr><td>Oportunidad</td>     <td class="score-cell" id="score-p2-chance">—</td></tr>
+          <tr class="totals-row"><td>Total Inferior</td>  <td id="total-lower-p2">0</td></tr>
+
+          <!-- Grand total -->
+          <tr class="grand-total-row"><td>TOTAL</td><td id="grand-total-p2">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </section><!-- /.scoreboard -->
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════
+     GAME-OVER MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="game-over-modal" class="modal-overlay hidden" role="dialog"
+     aria-modal="true" aria-labelledby="game-over-message">
+  <div class="modal-box">
+    <p id="game-over-message">¡Fin del juego!</p>
+    <p id="game-over-scores"></p>
+    <div class="modal-actions">
+      <button id="btn-new-game-modal" onclick="document.getElementById('btn-new-game').click()">
+        ↺ Nueva Partida
+      </button>
+      <button id="btn-close-gameover">✕ Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     STATS MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="stats-modal" class="modal-overlay hidden" role="dialog"
+     aria-modal="true" aria-labelledby="stats-modal-title">
+  <div class="modal-box">
+    <h2 id="stats-modal-title">📊 Estadísticas Monte Carlo</h2>
+    <div id="stats-body">
+      <!-- Injected by ui.js → renderStatsModal() -->
+    </div>
+    <div class="modal-actions">
+      <button id="btn-close-stats">✕ Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     TOAST
+════════════════════════════════════════════════════════════ -->
+<div id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════════════════════════ -->
+<footer>
+  Yahtzee · Simulación Monte Carlo · Variables aleatorias con distribución uniforme discreta
+  P(X=k) = 1/6, k ∈ {1,2,3,4,5,6}
+</footer>
+
+<!-- Scripts (order matters: dependencies first) -->
+<script src="js/scoring.js"></script>
+<script src="js/montecarlo.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+
+</body>
+</html>
