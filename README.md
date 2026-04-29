@@ -3,8 +3,9 @@ Aplicación del Método de Montecarlo  Simulación de juego con distribución un
 
 ## Simulación Monte Carlo en Python
 Incluye un script en Python que simula partidas de Yahtzee con decisiones aleatorias
-(sin estrategia) para estimar distribuciones y promedios. Las reglas de puntuación
-siguen las definidas en `scoring.js`.
+(sin estrategia) para estimar distribuciones y promedios. La simulación re-lanza
+todos los dados en cada tirada y selecciona la categoría al azar. Las reglas de
+puntuación siguen las definidas en `scoring.js`.
 
 Ejecuta:
 ```

@@ -3,6 +3,7 @@
 Simulación Monte Carlo de Yahtzee en Python.
 Genera estadísticas de lanzamientos, categorías y puntajes promedio.
 Reglas de puntuación alineadas con scoring.js (sin joker de Yahtzee en full house).
+La simulación re-lanza todos los dados y elige la categoría al azar (sin estrategia).
 """
 
 from __future__ import annotations
