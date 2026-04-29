@@ -42,7 +42,7 @@ UPPER_BONUS_VALUE = 35
 
 def create_stats(num_players: int) -> Dict:
     return {
-        "total_rolls": 0,
+        "total_dice_rolls": 0,
         "face_distribution": {face: 0 for face in range(1, 7)},
         "category_hits": {cat_id: 0 for cat_id in CATEGORY_IDS},
         "category_scores": {cat_id: [] for cat_id in CATEGORY_IDS},
@@ -52,7 +52,7 @@ def create_stats(num_players: int) -> Dict:
 
 
 def record_roll(stats: Dict, dice_values: List[int]) -> None:
-    stats["total_rolls"] += len(dice_values)
+    stats["total_dice_rolls"] += len(dice_values)
     for face in dice_values:
         stats["face_distribution"][face] = stats["face_distribution"].get(face, 0) + 1
 
@@ -94,7 +94,7 @@ def compute_summary(stats: Dict) -> Dict:
     }
 
     return {
-        "total_rolls": stats["total_rolls"],
+        "total_dice_rolls": stats["total_dice_rolls"],
         "face_distribution": dict(stats["face_distribution"]),
         "face_probs": face_probs,
         "chi_squared": chi_squared,
@@ -215,7 +215,7 @@ def simulate_game(stats: Dict, rng: random.Random, num_players: int) -> None:
 def print_summary(summary: Dict) -> None:
     print("=== Resumen Monte Carlo ===")
     print(f"Partidas completadas: {summary['games_completed']}")
-    print(f"Total de lanzamientos individuales: {summary['total_rolls']}")
+    print(f"Total de lanzamientos individuales: {summary['total_dice_rolls']}")
     print(f"χ² (Chi-cuadrado) vs uniforme: {summary['chi_squared']:.4f}")
     print("")
     print("Distribución de caras:")
