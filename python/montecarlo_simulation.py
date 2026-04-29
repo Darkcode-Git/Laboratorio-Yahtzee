@@ -1,270 +1,636 @@
-#!/usr/bin/env python3
-"""
-Simulación Monte Carlo de Yahtzee en Python.
-Genera estadísticas de lanzamientos, categorías y puntajes promedio.
-Reglas de puntuación alineadas con scoring.js (sin joker de Yahtzee en full house).
-La simulación re-lanza todos los dados y elige la categoría al azar (sin estrategia).
-"""
-
-from __future__ import annotations
-
-import argparse
 import random
-from typing import Any, Dict, List
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple
 
-MAX_ROLLS_PER_TURN = 3
-NUM_DICE = 5
+# ===============================
+# Parámetros Montecarlo
+# ===============================
+SIMS_PER_MASK = 300  # nº de simulaciones por máscara de bloqueo (32 máx). Ajusta si quieres más/menos precisión.
+SEED = 42            # fija semilla para reproducibilidad; pon None para aleatorio
 
-SCORING_CATEGORIES = [
-    # Sección superior
-    {"id": "ones", "label": "Ases (1s)", "section": "upper"},
-    {"id": "twos", "label": "Doses (2s)", "section": "upper"},
-    {"id": "threes", "label": "Treses (3s)", "section": "upper"},
-    {"id": "fours", "label": "Cuatros (4s)", "section": "upper"},
-    {"id": "fives", "label": "Cincos (5s)", "section": "upper"},
-    {"id": "sixes", "label": "Seises (6s)", "section": "upper"},
-    # Sección inferior
-    {"id": "threeOfAKind", "label": "Trío", "section": "lower"},
-    {"id": "fourOfAKind", "label": "Póker", "section": "lower"},
-    {"id": "fullHouse", "label": "Full House", "section": "lower"},
-    {"id": "smallStraight", "label": "Escalera Corta", "section": "lower"},
-    {"id": "largeStraight", "label": "Escalera Larga", "section": "lower"},
-    {"id": "yahtzee", "label": "Yahtzee", "section": "lower"},
-    {"id": "chance", "label": "Oportunidad", "section": "lower"},
+if SEED is not None:
+    random.seed(SEED)
+
+# ===============================
+# Utilidades de dados
+# ===============================
+def roll_single_die() -> int:
+    """Devuelve un entero uniforme en [1,6]."""
+    return random.randint(1, 6)
+
+def roll_dice(values: List[int], locked: List[bool]) -> None:
+    """Lanza dados no bloqueados, actualizando 'values' in place."""
+    for i, is_locked in enumerate(locked):
+        if not is_locked:
+            values[i] = roll_single_die()
+
+def has_sequence(values: List[int], needed_len: int) -> bool:
+    """¿Existe una secuencia consecutiva de longitud 'needed_len'? (ignora duplicados)."""
+    uniq = sorted(set(values))
+    if not uniq:
+        return False
+    longest = curr = 1
+    for i in range(1, len(uniq)):
+        if uniq[i] == uniq[i-1] + 1:
+            curr += 1
+            longest = max(longest, curr)
+        else:
+            curr = 1
+    return longest >= needed_len
+
+# ===============================
+# Puntuación
+# ===============================
+CATEGORIES_ORDER = [
+    "ones","twos","threes","fours","fives","sixes",
+    "threeOfKind","fourOfKind","fullHouse","smallStraight",
+    "largeStraight","yahtzee","chance"
 ]
 
-NUM_CATEGORIES = len(SCORING_CATEGORIES)
+def score_hand(category: str, dice: List[int]) -> int:
+    counts = Counter(dice)
+    freqs = list(counts.values())
+    total = sum(dice)
+    if category in ["ones","twos","threes","fours","fives","sixes"]:
+        num = {"ones":1, "twos":2, "threes":3, "fours":4, "fives":5, "sixes":6}[category]
+        return counts.get(num, 0) * num
+    if category == "threeOfKind":
+        return total if any(f >= 3 for f in freqs) else 0
+    if category == "fourOfKind":
+        return total if any(f >= 4 for f in freqs) else 0
+    if category == "fullHouse":
+        return 25 if (2 in freqs and 3 in freqs) else 0
+    if category == "smallStraight":
+        return 30 if has_sequence(dice, 4) else 0
+    if category == "largeStraight":
+        return 40 if has_sequence(dice, 5) else 0
+    if category == "yahtzee":
+        return 50 if 5 in freqs else 0
+    if category == "chance":
+        return total
+    return 0
 
-UPPER_BONUS_THRESHOLD = 63
-UPPER_BONUS_VALUE = 35
+def best_category_score(dice: List[int], available: List[str]) -> Tuple[str, int]:
+    """Devuelve (mejor_categoria, puntuación) para los dados dados."""
+    best_cat, best = None, -1
+    for cat in available:
+        sc = score_hand(cat, dice)
+        if sc > best:
+            best = sc
+            best_cat = cat
+    return best_cat, best
+
+# ===============================
+# Estructuras de juego
+# ===============================
+@dataclass
+class PlayerState:
+    name: str
+    scores: Dict[str, Optional[int]] = field(default_factory=lambda: {c: None for c in CATEGORIES_ORDER})
+    total: int = 0
+
+    def available_categories(self) -> List[str]:
+        return [c for c,v in self.scores.items() if v is None]
+
+    def set_score(self, category: str, points: int) -> None:
+        self.scores[category] = points
+        self.total = sum(v for v in self.scores.values() if v is not None)
+
+@dataclass
+class GameStats:
+    total_rolls: int = 0
+    face_hist: Counter = field(default_factory=Counter)
+
+    def update_from_roll(self, values: List[int]) -> None:
+        self.total_rolls += sum(1 for _ in values)  # 5 por tirada
+        self.face_hist.update(values)
+
+@dataclass
+class GameState:
+    players: List[PlayerState]
+    current_player_idx: int = 0
+    turn_in_round: int = 0  # 0..12 (13 turnos)
+    dice_values: List[int] = field(default_factory=lambda: [0]*5)
+    locked: List[bool] = field(default_factory=lambda: [False]*5)
+    rolls_left: int = 3
+    stats: GameStats = field(default_factory=GameStats)
+
+    def reset_turn(self):
+        self.dice_values = [0]*5
+        self.locked = [False]*5
+        self.rolls_left = 3
+
+    @property
+    def current_player(self) -> PlayerState:
+        return self.players[self.current_player_idx]
+
+    def advance_player(self):
+        self.current_player_idx = (self.current_player_idx + 1) % len(self.players)
+        if self.current_player_idx == 0:
+            self.turn_in_round += 1
+
+# ===============================
+# Montecarlo para decidir bloqueos
+# ===============================
+def all_keep_masks() -> List[List[bool]]:
+    """Genera las 32 máscaras posibles de bloqueo para 5 dados."""
+    masks = []
+    for m in range(32):  # 0..31
+        mask = [(m >> i) & 1 == 1 for i in range(5)]
+        masks.append(mask)
+    return masks
+
+def simulate_expected_value_after_keeps(
+    current_values: List[int],
+    keep_mask: List[bool],
+    rolls_remaining: int,
+    available_categories: List[str],
+    sims: int
+) -> float:
+    """
+    Estima el valor esperado de la mejor categoría si:
+    - conservas (keep_mask) algunos dados ahora,
+    - y después solo rerolléas los no conservados el número de veces restante,
+    - sin volver a cambiar la máscara (aprox. Montecarlo de 1 paso).
+    """
+    if rolls_remaining <= 0:
+        # Sin tiradas: solo puntuar ahora
+        _, sc = best_category_score(current_values, available_categories)
+        return float(sc)
+
+    kept = [v if keep_mask[i] else None for i, v in enumerate(current_values)]
+    unlocked_idx = [i for i,b in enumerate(keep_mask) if not b]
+
+    total_score = 0.0
+    for _ in range(sims):
+        # Copia de valores
+        vals = kept[:]
+        # Rerolls: tirar los no conservados 'rolls_remaining' veces, quedándose con la última
+        temp = current_values[:]  # por si keep None
+        for _r in range(rolls_remaining):
+            for i in unlocked_idx:
+                temp[i] = roll_single_die()
+        # Construir resultado final
+        for i in range(5):
+            vals[i] = vals[i] if vals[i] is not None else temp[i]
+
+        # Mejor categoría al final
+        _, sc = best_category_score(vals, available_categories)
+        total_score += sc
+
+    return total_score / sims if sims > 0 else 0.0
+
+def choose_keep_mask_montecarlo(
+    current_values: List[int],
+    rolls_remaining: int,
+    available_categories: List[str],
+    sims_per_mask: int = SIMS_PER_MASK
+) -> List[bool]:
+    """
+    Elige la máscara de bloqueo que maximiza el valor esperado estimado al final del turno.
+    Nota: aproximación de 1 paso (no recalcula bloqueos tras la siguiente tirada durante la simulación).
+    """
+    best_mask = None
+    best_ev = -1.0
+    for mask in all_keep_masks():
+        # Si el jugador decide "plantarse" ahora, la máscara sería keep todo (no cambia nada).
+        ev = simulate_expected_value_after_keeps(
+            current_values, mask, rolls_remaining - 1, available_categories, sims_per_mask
+        )
+        if ev > best_ev:
+            best_ev = ev
+            best_mask = mask
+    return best_mask
+
+# ===============================
+# Flujo del juego
+# ===============================
+def play_one_turn(state: GameState, verbose: bool = True):
+    """Un turno completo para el jugador actual: hasta 3 tiradas + elección de categoría."""
+    player = state.current_player
+    state.reset_turn()
+
+    # Tirada inicial
+    roll_dice(state.dice_values, state.locked)
+    state.stats.update_from_roll(state.dice_values)
+    state.rolls_left -= 1
+    if verbose:
+        print(f"\n{player.name} — Tirada 1:", state.dice_values)
+
+    # Hasta 2 rerolls con estrategia MC
+    while state.rolls_left > 0:
+        keep_mask = choose_keep_mask_montecarlo(
+            state.dice_values, state.rolls_left, player.available_categories()
+        )
+
+        # Si la máscara "keep_mask" implica mantener todo tal cual (keep 5), podemos decidir plantarnos:
+        if all(keep_mask):
+            if verbose:
+                print(f"{player.name} decide plantarse con:", state.dice_values)
+            break
+
+        # Bloquear según la máscara
+        state.locked = keep_mask[:]
+        # Reroll
+        roll_dice(state.dice_values, state.locked)
+        state.stats.update_from_roll(state.dice_values)
+        state.rolls_left -= 1
+        if verbose:
+            tirada_num = 3 - state.rolls_left
+            print(f"{player.name} — Tirada {tirada_num}:", state.dice_values, "| keep:", keep_mask)
+
+    # Elegir mejor categoría disponible para la mano final
+    cat, sc = best_category_score(state.dice_values, player.available_categories())
+    player.set_score(cat, sc)
+    if verbose:
+        print(f"→ {player.name} elige categoría '{cat}' y anota {sc} puntos. Total = {player.total}")
+
+def play_game(verbose_each_turn: bool = False) -> GameState:
+    players = [PlayerState("Jugador 1"), PlayerState("Jugador 2")]
+    state = GameState(players=players)
+    total_rounds = 13
+
+    print("🎲 Iniciando simulación de Montecarlo (Motor de IA tomando decisiones)...")
+    for r in range(total_rounds):
+        for _p in range(len(players)):
+            play_one_turn(state, verbose=verbose_each_turn)
+            state.advance_player()  # <--- ¡Esta es la línea que faltaba!
+    print("✅ Simulación completada.\n")
+    return state
+
+# ===============================
+# Ejecutar simulación completa
+# ===============================
+state = play_game(verbose_each_turn=True)
+
+# ===============================
+# Mostrar resultados
+# ===============================
+def print_scoreboard(state: GameState):
+    print("\n\n===== MARCADOR FINAL =====")
+    for p in state.players:
+        print(f"\n{p.name}: {p.total} puntos")
+        for cat in CATEGORIES_ORDER:
+            v = p.scores[cat]
+            print(f"  - {cat:13s}: {v if v is not None else 0}")
+    # Ganador
+    if state.players[0].total > state.players[1].total:
+        winner = state.players[0].name
+    elif state.players[1].total > state.players[0].total:
+        winner = state.players[1].name
+    else:
+        winner = "Empate"
+    print(f"\n🏆 Ganador: {winner}")
+
+def print_stats(state: GameState):
+    print("\n===== ESTADÍSTICAS =====")
+    print(f"Total de lanzamientos (dados individuales): {state.stats.total_rolls}")
+    total_faces = sum(state.stats.face_hist.values())
+    for face in range(1,7):
+        c = state.stats.face_hist.get(face, 0)
+        p = (c/total_faces)*100 if total_faces else 0.0
+        print(f" Cara {face}: {c} veces ({p:.2f}%)")
+
+print_scoreboard(state)
+print_stats(state)
 
 
-Stats = Dict[str, Any]
-Summary = Dict[str, Any]
+import random
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple
+
+# Importamos librerías para visualización de datos (El toque didáctico)
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+# ===============================
+# Parámetros Montecarlo
+# ===============================
+SIMS_PER_MASK = 300  # nº de simulaciones por máscara de bloqueo (32 máx). Ajusta si quieres más/menos precisión.
+SEED = 42            # fija semilla para reproducibilidad; pon None para aleatorio
+
+if SEED is not None:
+    random.seed(SEED)
+
+# ===============================
+# Utilidades de dados
+# ===============================
+def roll_single_die() -> int:
+    """Devuelve un entero uniforme en [1,6]."""
+    return random.randint(1, 6)
+
+def roll_dice(values: List[int], locked: List[bool]) -> None:
+    """Lanza dados no bloqueados, actualizando 'values' in place."""
+    for i, is_locked in enumerate(locked):
+        if not is_locked:
+            values[i] = roll_single_die()
+
+def has_sequence(values: List[int], needed_len: int) -> bool:
+    """¿Existe una secuencia consecutiva de longitud 'needed_len'? (ignora duplicados)."""
+    uniq = sorted(set(values))
+    if not uniq:
+        return False
+    longest = curr = 1
+    for i in range(1, len(uniq)):
+        if uniq[i] == uniq[i-1] + 1:
+            curr += 1
+            longest = max(longest, curr)
+        else:
+            curr = 1
+    return longest >= needed_len
+
+# ===============================
+# Puntuación
+# ===============================
+CATEGORIES_ORDER = [
+    "ones","twos","threes","fours","fives","sixes",
+    "threeOfKind","fourOfKind","fullHouse","smallStraight",
+    "largeStraight","yahtzee","chance"
+]
+
+def score_hand(category: str, dice: List[int]) -> int:
+    counts = Counter(dice)
+    freqs = list(counts.values())
+    total = sum(dice)
+    if category in ["ones","twos","threes","fours","fives","sixes"]:
+        num = {"ones":1, "twos":2, "threes":3, "fours":4, "fives":5, "sixes":6}[category]
+        return counts.get(num, 0) * num
+    if category == "threeOfKind":
+        return total if any(f >= 3 for f in freqs) else 0
+    if category == "fourOfKind":
+        return total if any(f >= 4 for f in freqs) else 0
+    if category == "fullHouse":
+        return 25 if (2 in freqs and 3 in freqs) else 0
+    if category == "smallStraight":
+        return 30 if has_sequence(dice, 4) else 0
+    if category == "largeStraight":
+        return 40 if has_sequence(dice, 5) else 0
+    if category == "yahtzee":
+        return 50 if 5 in freqs else 0
+    if category == "chance":
+        return total
+    return 0
+
+def best_category_score(dice: List[int], available: List[str]) -> Tuple[str, int]:
+    """Devuelve (mejor_categoria, puntuación) para los dados dados."""
+    best_cat, best = None, -1
+    for cat in available:
+        sc = score_hand(cat, dice)
+        if sc > best:
+            best = sc
+            best_cat = cat
+    return best_cat, best
+
+# ===============================
+# Estructuras de juego
+# ===============================
+@dataclass
+class PlayerState:
+    name: str
+    scores: Dict[str, Optional[int]] = field(default_factory=lambda: {c: None for c in CATEGORIES_ORDER})
+    total: int = 0
+
+    def available_categories(self) -> List[str]:
+        return [c for c,v in self.scores.items() if v is None]
+
+    def set_score(self, category: str, points: int) -> None:
+        self.scores[category] = points
+        self.total = sum(v for v in self.scores.values() if v is not None)
+
+@dataclass
+class GameStats:
+    total_rolls: int = 0
+    face_hist: Counter = field(default_factory=Counter)
+
+    def update_from_roll(self, values: List[int]) -> None:
+        self.total_rolls += sum(1 for _ in values)  # 5 por tirada
+        self.face_hist.update(values)
+
+@dataclass
+class GameState:
+    players: List[PlayerState]
+    current_player_idx: int = 0
+    turn_in_round: int = 0  # 0..12 (13 turnos)
+    dice_values: List[int] = field(default_factory=lambda: [0]*5)
+    locked: List[bool] = field(default_factory=lambda: [False]*5)
+    rolls_left: int = 3
+    stats: GameStats = field(default_factory=GameStats)
+
+    def reset_turn(self):
+        self.dice_values = [0]*5
+        self.locked = [False]*5
+        self.rolls_left = 3
+
+    @property
+    def current_player(self) -> PlayerState:
+        return self.players[self.current_player_idx]
+
+    def advance_player(self):
+        self.current_player_idx = (self.current_player_idx + 1) % len(self.players)
+        if self.current_player_idx == 0:
+            self.turn_in_round += 1
+
+# ===============================
+# Montecarlo para decidir bloqueos
+# ===============================
+def all_keep_masks() -> List[List[bool]]:
+    masks = []
+    for m in range(32):
+        mask = [(m >> i) & 1 == 1 for i in range(5)]
+        masks.append(mask)
+    return masks
+
+def simulate_expected_value_after_keeps(
+    current_values: List[int], keep_mask: List[bool], rolls_remaining: int,
+    available_categories: List[str], sims: int
+) -> float:
+    if rolls_remaining <= 0:
+        _, sc = best_category_score(current_values, available_categories)
+        return float(sc)
+
+    kept = [v if keep_mask[i] else None for i, v in enumerate(current_values)]
+    unlocked_idx = [i for i,b in enumerate(keep_mask) if not b]
+
+    total_score = 0.0
+    for _ in range(sims):
+        vals = kept[:]
+        temp = current_values[:]
+        for _r in range(rolls_remaining):
+            for i in unlocked_idx:
+                temp[i] = roll_single_die()
+        for i in range(5):
+            vals[i] = vals[i] if vals[i] is not None else temp[i]
+
+        _, sc = best_category_score(vals, available_categories)
+        total_score += sc
+
+    return total_score / sims if sims > 0 else 0.0
+
+def choose_keep_mask_montecarlo(
+    current_values: List[int], rolls_remaining: int,
+    available_categories: List[str], sims_per_mask: int = SIMS_PER_MASK
+) -> List[bool]:
+    best_mask = None
+    best_ev = -1.0
+    for mask in all_keep_masks():
+        ev = simulate_expected_value_after_keeps(
+            current_values, mask, rolls_remaining - 1, available_categories, sims_per_mask
+        )
+        if ev > best_ev:
+            best_ev = ev
+            best_mask = mask
+    return best_mask
+
+# ===============================
+# Flujo del juego
+# ===============================
+def play_one_turn(state: GameState, verbose: bool = False): # Apagamos el verbose por defecto para no ensuciar la salida final
+    player = state.current_player
+    state.reset_turn()
+
+    roll_dice(state.dice_values, state.locked)
+    state.stats.update_from_roll(state.dice_values)
+    state.rolls_left -= 1
+    if verbose: print(f"\n{player.name} — Tirada 1:", state.dice_values)
+
+    while state.rolls_left > 0:
+        keep_mask = choose_keep_mask_montecarlo(
+            state.dice_values, state.rolls_left, player.available_categories()
+        )
+        if all(keep_mask):
+            if verbose: print(f"{player.name} decide plantarse con:", state.dice_values)
+            break
+
+        state.locked = keep_mask[:]
+        roll_dice(state.dice_values, state.locked)
+        state.stats.update_from_roll(state.dice_values)
+        state.rolls_left -= 1
+        if verbose: print(f"{player.name} — Tirada {3 - state.rolls_left}:", state.dice_values, "| keep:", keep_mask)
+
+    cat, sc = best_category_score(state.dice_values, player.available_categories())
+    player.set_score(cat, sc)
+    if verbose: print(f"→ {player.name} elige '{cat}' y anota {sc} pts. Total = {player.total}")
+
+def play_game(verbose_each_turn: bool = False) -> GameState:
+    players = [PlayerState("Jugador 1"), PlayerState("Jugador 2")]
+    state = GameState(players=players)
+    total_rounds = 13
+
+    print("🎲 Iniciando simulación de Montecarlo (Motor de IA tomando decisiones)...")
+    for r in range(total_rounds):
+        for _p in range(len(players)):
+            play_one_turn(state, verbose=verbose_each_turn)
+            state.advance_player()  # <--- ¡Esta es la línea que faltaba!
+    print("✅ Simulación completada.\n")
+    return state
+# ===============================
+# Ejecutar simulación completa
+# ===============================
+# Ejecutamos en silencio para priorizar el análisis final
+estado_final = play_game(verbose_each_turn=False)
 
 
-def create_stats(num_players: int) -> Stats:
-    category_ids = [cat["id"] for cat in SCORING_CATEGORIES]
-    return {
-        "total_dice_rolls": 0,
-        "face_distribution": {face: 0 for face in range(1, 7)},
-        "category_hits": {cat_id: 0 for cat_id in category_ids},
-        "category_scores": {cat_id: [] for cat_id in category_ids},
-        "player_final_scores": {player: [] for player in range(1, num_players + 1)},
-        "games_completed": 0,
-    }
+# =========================================================
+# REFACTORIZACIÓN DIDÁCTICA: ANÁLISIS Y VISUALIZACIÓN
+# =========================================================
+def analisis_didactico_resultados(state: GameState):
+    """Presenta los resultados de la simulación de forma visual y pedagógica."""
+
+    # Configuración visual de Seaborn
+    sns.set_theme(style="whitegrid")
+
+    # --- 1. RESUMEN DEL PARTIDO (TABLA VISUAL) ---
+    print("="*50)
+    print(" 📊 ANÁLISIS DE LA PARTIDA Y TOMA DE DECISIONES")
+    print("="*50)
+
+    # Determinamos al ganador
+    p1, p2 = state.players
+    if p1.total > p2.total:
+        ganador = p1.name
+    elif p2.total > p1.total:
+        ganador = p2.name
+    else:
+        ganador = "Empate"
+
+    print(f"\n🏆 Resultado de la Simulación: ¡El ganador es {ganador}!\n")
+
+    # Construimos un DataFrame de Pandas para que los estudiantes vean una tabla estructurada
+    df_scores = pd.DataFrame({
+        "Categoría": CATEGORIES_ORDER,
+        p1.name: [p1.scores[c] if p1.scores[c] is not None else 0 for c in CATEGORIES_ORDER],
+        p2.name: [p2.scores[c] if p2.scores[c] is not None else 0 for c in CATEGORIES_ORDER]
+    })
+
+    # Mostramos la tabla formateada
+    print(df_scores.to_string(index=False))
+    print("-" * 30)
+    print(f"PUNTUACIÓN TOTAL | {p1.name}: {p1.total} | {p2.name}: {p2.total}")
+
+    # --- GRÁFICO 1: COMPARACIÓN DE PUNTUACIONES ---
+    plt.figure(figsize=(10, 5))
+    ax = sns.barplot(x="Categoría", y="Valor", hue="Jugador",
+                     data=pd.melt(df_scores, id_vars="Categoría", var_name="Jugador", value_name="Valor"),
+                     palette="muted")
+    plt.title("Comparación de Puntuaciones por Categoría", fontsize=14, fontweight="bold")
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Puntos Obtenidos")
+    plt.xlabel("Categoría de Yahtzee")
+    plt.tight_layout()
+    plt.show()
+
+    # --- 2. ANÁLISIS DE PROBABILIDAD Y LA LEY DE LOS GRANDES NÚMEROS ---
+    print("\n" + "="*50)
+    print(" 🎲 ANÁLISIS DEL MOTOR DE DADOS (Validación de Montecarlo)")
+    print("="*50)
+    print("\nEn una simulación de Montecarlo, es vital comprobar si nuestro generador aleatorio es justo.")
+    print(f"Teóricamente, cada cara de un dado perfecto tiene una probabilidad de: 1/6 = 16.67%")
+    print(f"Veamos cómo se comportaron nuestros dados tras {state.stats.total_rolls} lanzamientos individuales:\n")
 
 
-def record_roll(stats: Stats, dice_values: List[int]) -> None:
-    stats["total_dice_rolls"] += len(dice_values)
-    for face in dice_values:
-        stats["face_distribution"][face] += 1
 
+    total_faces = sum(state.stats.face_hist.values())
+    caras = list(range(1, 7))
+    frecuencias = [state.stats.face_hist.get(face, 0) for face in caras]
+    probabilidades_empiricas = [(frec / total_faces) * 100 if total_faces else 0 for frec in frecuencias]
 
-def record_category_score(stats: Stats, category_id: str, score: int) -> None:
-    if score > 0:
-        stats["category_hits"][category_id] += 1
-    stats["category_scores"][category_id].append(score)
+    # Imprimimos los resultados teóricos vs simulados
+    for face, frec, prob in zip(caras, frecuencias, probabilidades_empiricas):
+        error_marginal = abs(prob - 16.67)
+        print(f" Cara {face}: Salió {frec} veces -> {prob:.2f}% (Diferencia vs Teoría: {error_marginal:.2f}%)")
 
+    # --- GRÁFICO 2: DISTRIBUCIÓN DE PROBABILIDAD ---
+    plt.figure(figsize=(8, 5))
 
-def record_game_end(stats: Stats, player_totals: Dict[int, int]) -> None:
-    for player, total in player_totals.items():
-        stats["player_final_scores"][player].append(total)
-    stats["games_completed"] += 1
+    # Graficamos los datos empíricos
+    bar_plot = sns.barplot(x=caras, y=probabilidades_empiricas, color="skyblue", label="Probabilidad Simulada")
 
+    # Agregamos la línea teórica del 16.67%
+    plt.axhline(y=16.67, color='red', linestyle='--', linewidth=2, label='Probabilidad Teórica (16.67%)')
 
-def compute_summary(stats: Stats) -> Summary:
-    total_faces = sum(stats["face_distribution"].values())
-    face_probs = {
-        face: (count / total_faces if total_faces > 0 else 0)
-        for face, count in stats["face_distribution"].items()
-    }
+    plt.title(f"Distribución de Caras tras {state.stats.total_rolls} lanzamientos", fontsize=14, fontweight="bold")
+    plt.xlabel("Cara del Dado")
+    plt.ylabel("Frecuencia Relativa (%)")
+    plt.ylim(0, max(probabilidades_empiricas) + 5) # Damos espacio arriba
+    plt.legend()
 
-    expected = total_faces / 6 if total_faces > 0 else 0
-    chi_squared = 0.0
-    if expected > 0:
-        for face in range(1, 7):
-            observed = stats["face_distribution"][face]
-            chi_squared += ((observed - expected) ** 2) / expected
+    # Añadir los porcentajes encima de las barras para máxima claridad
+    for p in bar_plot.patches:
+        bar_plot.annotate(format(p.get_height(), '.1f') + '%',
+                          (p.get_x() + p.get_width() / 2., p.get_height()),
+                          ha = 'center', va = 'center',
+                          xytext = (0, 9),
+                          textcoords = 'offset points')
 
-    avg_category_scores = {
-        cat_id: (sum(scores) / len(scores) if scores else 0)
-        for cat_id, scores in stats["category_scores"].items()
-    }
+    plt.show()
 
-    avg_final_score = {
-        player: (sum(scores) / len(scores) if scores else 0)
-        for player, scores in stats["player_final_scores"].items()
-    }
+    print("\n💡 REFLEXIÓN DIDÁCTICA:")
+    print("Observa el gráfico de distribución. La línea punteada roja representa la probabilidad matemática ideal.")
+    print("Las barras azules son el resultado de la simulación. Gracias a la 'Ley de los Grandes Números', notarás")
+    print("que a medida que la simulación realiza más lanzamientos, las barras azules se acercarán cada vez más a la línea roja.")
 
-    return {
-        "total_dice_rolls": stats["total_dice_rolls"],
-        "face_distribution": dict(stats["face_distribution"]),
-        "face_probs": face_probs,
-        "chi_squared": chi_squared,
-        "category_hits": dict(stats["category_hits"]),
-        "avg_category_scores": avg_category_scores,
-        "games_completed": stats["games_completed"],
-        "avg_final_score": avg_final_score,
-    }
-
-
-def frequencies(dice: List[int]) -> Dict[int, int]:
-    counts: Dict[int, int] = {}
-    for value in dice:
-        counts[value] = counts.get(value, 0) + 1
-    return counts
-
-
-def upper_score(dice: List[int], face: int) -> int:
-    return sum(value for value in dice if value == face)
-
-
-def of_a_kind(dice: List[int], count: int) -> int:
-    freq = frequencies(dice)
-    qualifies = any(c >= count for c in freq.values())
-    return sum(dice) if qualifies else 0
-
-
-def full_house(dice: List[int]) -> int:
-    freq = sorted(frequencies(dice).values())
-    return 25 if freq == [2, 3] else 0
-
-
-def small_straight(dice: List[int]) -> int:
-    unique = set(dice)
-    sequences = [{1, 2, 3, 4}, {2, 3, 4, 5}, {3, 4, 5, 6}]
-    return 30 if any(seq.issubset(unique) for seq in sequences) else 0
-
-
-def large_straight(dice: List[int]) -> int:
-    unique = set(dice)
-    sequences = [{1, 2, 3, 4, 5}, {2, 3, 4, 5, 6}]
-    return 40 if any(seq.issubset(unique) for seq in sequences) else 0
-
-
-def yahtzee(dice: List[int]) -> int:
-    return 50 if len(set(dice)) == 1 else 0
-
-
-def chance(dice: List[int]) -> int:
-    return sum(dice)
-
-
-def calculate_potential_scores(dice: List[int]) -> Dict[str, int]:
-    return {
-        "ones": upper_score(dice, 1),
-        "twos": upper_score(dice, 2),
-        "threes": upper_score(dice, 3),
-        "fours": upper_score(dice, 4),
-        "fives": upper_score(dice, 5),
-        "sixes": upper_score(dice, 6),
-        "threeOfAKind": of_a_kind(dice, 3),
-        "fourOfAKind": of_a_kind(dice, 4),
-        "fullHouse": full_house(dice),
-        "smallStraight": small_straight(dice),
-        "largeStraight": large_straight(dice),
-        "yahtzee": yahtzee(dice),
-        "chance": chance(dice),
-    }
-
-
-def compute_totals(score_card: Dict[str, int | None]) -> Dict[str, int]:
-    upper_ids = [cat["id"] for cat in SCORING_CATEGORIES if cat["section"] == "upper"]
-    lower_ids = [cat["id"] for cat in SCORING_CATEGORIES if cat["section"] == "lower"]
-
-    upper_raw = sum(score_card[cat_id] or 0 for cat_id in upper_ids)
-    upper_bonus = UPPER_BONUS_VALUE if upper_raw >= UPPER_BONUS_THRESHOLD else 0
-    lower_total = sum(score_card[cat_id] or 0 for cat_id in lower_ids)
-
-    return {
-        "upper_raw": upper_raw,
-        "upper_bonus": upper_bonus,
-        "lower_total": lower_total,
-        "grand_total": upper_raw + upper_bonus + lower_total,
-    }
-
-
-def create_empty_score_card() -> Dict[str, int | None]:
-    return {cat["id"]: None for cat in SCORING_CATEGORIES}
-
-
-def roll_one_die(rng: random.Random) -> int:
-    return rng.randint(1, 6)
-
-
-def simulate_game(stats: Stats, rng: random.Random, num_players: int) -> None:
-    players = list(range(1, num_players + 1))
-    score_cards = {player: create_empty_score_card() for player in players}
-
-    for _ in range(NUM_CATEGORIES):
-        for player in players:
-            dice: List[int] = []
-            for _ in range(MAX_ROLLS_PER_TURN):
-                dice = [roll_one_die(rng) for _ in range(NUM_DICE)]
-                record_roll(stats, dice)
-
-            available = [cat_id for cat_id, score in score_cards[player].items() if score is None]
-            category_id = rng.choice(available)
-            score = calculate_potential_scores(dice)[category_id]
-            score_cards[player][category_id] = score
-            record_category_score(stats, category_id, score)
-
-    player_totals = {
-        player: compute_totals(score_cards[player])["grand_total"] for player in players
-    }
-    record_game_end(stats, player_totals)
-
-
-def print_summary(summary: Summary) -> None:
-    print("=== Resumen Monte Carlo ===")
-    print(f"Partidas completadas: {summary['games_completed']}")
-    print(f"Total de lanzamientos individuales: {summary['total_dice_rolls']}")
-    print(f"χ² (Chi-cuadrado) vs uniforme: {summary['chi_squared']:.4f}")
-    print("")
-    print("Distribución de caras:")
-    for face in range(1, 7):
-        count = summary["face_distribution"][face]
-        prob = summary["face_probs"][face] * 100
-        print(f"  Cara {face}: {count} ({prob:.2f}%)")
-    print("")
-    print("Frecuencia de categorías:")
-    for cat in SCORING_CATEGORIES:
-        cat_id = cat["id"]
-        hits = summary["category_hits"][cat_id]
-        avg = summary["avg_category_scores"][cat_id]
-        print(f"  {cat['label']}: {hits} veces, promedio {avg:.1f}")
-    print("")
-    print("Puntajes finales promedio:")
-    for player, avg in summary["avg_final_score"].items():
-        print(f"  Jugador {player}: {avg:.1f} pts")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Simulación Monte Carlo del juego Yahtzee."
-    )
-    parser.add_argument("--games", type=int, default=1000, help="Número de partidas.")
-    parser.add_argument("--players", type=int, default=2, help="Número de jugadores.")
-    parser.add_argument("--seed", type=int, default=None, help="Semilla aleatoria.")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    if args.games <= 0:
-        raise SystemExit("El número de partidas debe ser mayor que 0.")
-    if args.players <= 0:
-        raise SystemExit("El número de jugadores debe ser mayor que 0.")
-
-    rng = random.Random(args.seed)
-    stats = create_stats(args.players)
-    for _ in range(args.games):
-        simulate_game(stats, rng, args.players)
-
-    summary = compute_summary(stats)
-    print_summary(summary)
-
-
-if __name__ == "__main__":
-    main()
+# Llamamos a la nueva función de presentación
+analisis_didactico_resultados(estado_final)
