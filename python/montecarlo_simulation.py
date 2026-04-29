@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import random
-from typing import Dict, List
+from typing import Any, Dict, List
 
 MAX_ROLLS_PER_TURN = 3
 NUM_DICE = 5
@@ -40,7 +40,11 @@ UPPER_BONUS_THRESHOLD = 63
 UPPER_BONUS_VALUE = 35
 
 
-def create_stats(num_players: int) -> Dict:
+Stats = Dict[str, Any]
+Summary = Dict[str, Any]
+
+
+def create_stats(num_players: int) -> Stats:
     return {
         "total_dice_rolls": 0,
         "face_distribution": {face: 0 for face in range(1, 7)},
@@ -51,25 +55,25 @@ def create_stats(num_players: int) -> Dict:
     }
 
 
-def record_roll(stats: Dict, dice_values: List[int]) -> None:
+def record_roll(stats: Stats, dice_values: List[int]) -> None:
     stats["total_dice_rolls"] += len(dice_values)
     for face in dice_values:
         stats["face_distribution"][face] = stats["face_distribution"].get(face, 0) + 1
 
 
-def record_category_score(stats: Dict, category_id: str, score: int) -> None:
+def record_category_score(stats: Stats, category_id: str, score: int) -> None:
     if score > 0:
         stats["category_hits"][category_id] = stats["category_hits"].get(category_id, 0) + 1
     stats["category_scores"][category_id].append(score)
 
 
-def record_game_end(stats: Dict, player_totals: Dict[int, int]) -> None:
+def record_game_end(stats: Stats, player_totals: Dict[int, int]) -> None:
     for player, total in player_totals.items():
         stats["player_final_scores"][player].append(total)
     stats["games_completed"] += 1
 
 
-def compute_summary(stats: Dict) -> Dict:
+def compute_summary(stats: Stats) -> Summary:
     total_faces = sum(stats["face_distribution"].values())
     face_probs = {
         face: (count / total_faces if total_faces > 0 else 0)
@@ -189,7 +193,7 @@ def roll_one_die(rng: random.Random) -> int:
     return rng.randint(1, 6)
 
 
-def simulate_game(stats: Dict, rng: random.Random, num_players: int) -> None:
+def simulate_game(stats: Stats, rng: random.Random, num_players: int) -> None:
     players = list(range(1, num_players + 1))
     score_cards = {player: create_empty_score_card() for player in players}
 
@@ -212,7 +216,7 @@ def simulate_game(stats: Dict, rng: random.Random, num_players: int) -> None:
     record_game_end(stats, player_totals)
 
 
-def print_summary(summary: Dict) -> None:
+def print_summary(summary: Summary) -> None:
     print("=== Resumen Monte Carlo ===")
     print(f"Partidas completadas: {summary['games_completed']}")
     print(f"Total de lanzamientos individuales: {summary['total_dice_rolls']}")
