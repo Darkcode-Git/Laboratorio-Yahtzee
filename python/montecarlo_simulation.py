@@ -2,6 +2,7 @@
 """
 Simulación Monte Carlo de Yahtzee en Python.
 Genera estadísticas de lanzamientos, categorías y puntajes promedio.
+Reglas de puntuación alineadas con scoring.js (sin joker de Yahtzee en full house).
 """
 
 from __future__ import annotations
@@ -193,7 +194,7 @@ def simulate_game(stats: Dict, rng: random.Random, num_players: int) -> None:
 
     for _ in range(NUM_CATEGORIES):
         for player in players:
-            dice = [1] * NUM_DICE
+            dice: List[int] = []
             for _ in range(MAX_ROLLS_PER_TURN):
                 dice = [roll_one_die(rng) for _ in range(NUM_DICE)]
                 record_roll(stats, dice)
