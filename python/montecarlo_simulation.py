@@ -33,8 +33,7 @@ SCORING_CATEGORIES = [
     {"id": "chance", "label": "Oportunidad", "section": "lower"},
 ]
 
-CATEGORY_IDS = [cat["id"] for cat in SCORING_CATEGORIES]
-NUM_CATEGORIES = len(CATEGORY_IDS)
+NUM_CATEGORIES = len(SCORING_CATEGORIES)
 
 UPPER_BONUS_THRESHOLD = 63
 UPPER_BONUS_VALUE = 35
@@ -45,11 +44,12 @@ Summary = Dict[str, Any]
 
 
 def create_stats(num_players: int) -> Stats:
+    category_ids = [cat["id"] for cat in SCORING_CATEGORIES]
     return {
         "total_dice_rolls": 0,
         "face_distribution": {face: 0 for face in range(1, 7)},
-        "category_hits": {cat_id: 0 for cat_id in CATEGORY_IDS},
-        "category_scores": {cat_id: [] for cat_id in CATEGORY_IDS},
+        "category_hits": {cat_id: 0 for cat_id in category_ids},
+        "category_scores": {cat_id: [] for cat_id in category_ids},
         "player_final_scores": {player: [] for player in range(1, num_players + 1)},
         "games_completed": 0,
     }
@@ -58,12 +58,12 @@ def create_stats(num_players: int) -> Stats:
 def record_roll(stats: Stats, dice_values: List[int]) -> None:
     stats["total_dice_rolls"] += len(dice_values)
     for face in dice_values:
-        stats["face_distribution"][face] = stats["face_distribution"].get(face, 0) + 1
+        stats["face_distribution"][face] += 1
 
 
 def record_category_score(stats: Stats, category_id: str, score: int) -> None:
     if score > 0:
-        stats["category_hits"][category_id] = stats["category_hits"].get(category_id, 0) + 1
+        stats["category_hits"][category_id] += 1
     stats["category_scores"][category_id].append(score)
 
 
@@ -186,7 +186,7 @@ def compute_totals(score_card: Dict[str, int | None]) -> Dict[str, int]:
 
 
 def create_empty_score_card() -> Dict[str, int | None]:
-    return {cat_id: None for cat_id in CATEGORY_IDS}
+    return {cat["id"]: None for cat in SCORING_CATEGORIES}
 
 
 def roll_one_die(rng: random.Random) -> int:
